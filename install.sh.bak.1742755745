@@ -1,0 +1,205 @@
+#!/bin/bash
+
+# Профессиональный установщик для системы безопасности
+# Версия: 1.0.0
+
+# Определение цветов для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Глобальные переменные
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/lib"
+LOG_FILE="/var/log/security_install.log"
+
+# Функция логирования
+log() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    
+    case "$level" in
+        "INFO")
+            echo -e "${GREEN}[INFO]${NC} ${timestamp} - $message"
+            ;;
+        "WARN")
+            echo -e "${YELLOW}[WARN]${NC} ${timestamp} - $message"
+            ;;
+        "ERROR")
+            echo -e "${RED}[ERROR]${NC} ${timestamp} - $message"
+            ;;
+        "DEBUG")
+            echo -e "${BLUE}[DEBUG]${NC} ${timestamp} - $message"
+            ;;
+        *)
+            echo -e "${timestamp} - $message"
+            ;;
+    esac
+    
+    # Записываем в лог файл если он существует
+    if [ -f "$LOG_FILE" ]; then
+        echo "${timestamp} [$level] - $message" >> "$LOG_FILE"
+    fi
+}
+
+# Функция для проверки root прав
+check_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        log "ERROR" "Этот скрипт должен быть запущен с правами root"
+        exit 1
+    fi
+}
+
+# Функция для загрузки библиотек
+load_libraries() {
+    log "INFO" "Загрузка библиотек..."
+    
+    if [ -f "${LIB_DIR}/system_utils.sh" ]; then
+        source "${LIB_DIR}/system_utils.sh"
+        log "INFO" "Загружена system_utils.sh"
+    else
+        log "ERROR" "system_utils.sh не найдена в ${LIB_DIR}"
+        exit 1
+    fi
+    
+    if [ -f "${LIB_DIR}/network_utils.sh" ]; then
+        source "${LIB_DIR}/network_utils.sh"
+        log "INFO" "Загружена network_utils.sh"
+    else
+        log "ERROR" "network_utils.sh не найдена в ${LIB_DIR}"
+        exit 1
+    fi
+    
+    if [ -f "${LIB_DIR}/ids_utils.sh" ]; then
+        source "${LIB_DIR}/ids_utils.sh"
+        log "INFO" "Загружена ids_utils.sh"
+    else
+        log "ERROR" "ids_utils.sh не найдена в ${LIB_DIR}"
+        exit 1
+    fi
+    
+    if [ -f "${LIB_DIR}/forensics.sh" ]; then
+        source "${LIB_DIR}/forensics.sh"
+        log "INFO" "Загружена forensics.sh"
+    else
+        log "ERROR" "forensics.sh не найдена в ${LIB_DIR}"
+        exit 1
+    fi
+    
+    if [ -f "${LIB_DIR}/anonymize.sh" ]; then
+        source "${LIB_DIR}/anonymize.sh"
+        log "INFO" "Загружена anonymize.sh"
+    else
+        log "ERROR" "anonymize.sh не найдена в ${LIB_DIR}"
+        exit 1
+    fi
+    
+    log "INFO" "Все библиотеки загружены успешно"
+}
+
+# Функция для настройки системы
+setup_system() {
+    log "INFO" "Настройка системы..."
+    
+    # Создание конфигурации sysctl
+    cat << EOF > /etc/sysctl.d/99-security.conf
+# Enhanced security settings for Fedora 41
+# System protection parameters
+kernel.randomize_va_space = 2
+kernel.kptr_restrict = 2
+kernel.yama.ptrace_scope = 2
+kernel.unprivileged_bpf_disabled = 1
+net.core.bpf_jit_harden = 2
+dev.tty.ldisc_autoload = 0
+vm.unprivileged_userfaultfd = 0
+
+# Network protection
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.secure_redirects = 0
+net.ipv4.conf.default.secure_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+EOF
+    
+    # Применяем настройки sysctl
+    sysctl -p /etc/sysctl.d/99-security.conf
+    
+    log "INFO" "Системные настройки применены"
+}
+
+# Функция для запуска компонентов
+run_components() {
+    log "INFO" "Запуск компонентов..."
+    
+    # Запуск hardening системы
+    if type -t harden_system &>/dev/null; then
+        harden_system
+        log "INFO" "Система защищена"
+    else
+        log "WARN" "Функция harden_system не найдена"
+    fi
+    
+    # Настройка сети
+    if type -t secure_network &>/dev/null; then
+        secure_network
+        log "INFO" "Сеть защищена"
+    else
+        log "WARN" "Функция secure_network не найдена"
+    fi
+    
+    # Настройка IDS
+    if type -t setup_ids &>/dev/null; then
+        setup_ids
+        log "INFO" "IDS настроена"
+    else
+        log "WARN" "Функция setup_ids не найдена"
+    fi
+    
+    # Настройка форензики
+    if type -t setup_forensics &>/dev/null; then
+        setup_forensics
+        log "INFO" "Форензика настроена"
+    else
+        log "WARN" "Функция setup_forensics не найдена"
+    fi
+    
+    # Настройка анонимизации
+    if type -t apply_anonymization &>/dev/null; then
+        apply_anonymization
+        log "INFO" "Анонимизация настроена"
+    else
+        log "WARN" "Функция apply_anonymization не найдена"
+    fi
+    
+    log "INFO" "Все компоненты запущены"
+}
+
+# Основная функция
+main() {
+    log "INFO" "Запуск установки системы безопасности"
+    
+    # Проверка на root
+    check_root
+    
+    # Загрузка библиотек
+    load_libraries
+    
+    # Настройка системы
+    setup_system
+    
+    # Запуск компонентов
+    run_components
+    
+    log "INFO" "Установка успешно завершена"
+    echo -e "${GREEN}Установка успешно завершена!${NC}"
+}
+
+# Запуск основной функции
+main

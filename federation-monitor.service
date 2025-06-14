@@ -1,0 +1,14 @@
+[Unit]
+Description=Fedora 41 Security Monitoring System
+After=network.target auditd.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/path/to/monitor.sh
+Restart=on-failure
+RestartSec=10
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target 

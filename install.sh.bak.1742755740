@@ -1,0 +1,2137 @@
+#!/bin/bash
+#
+# FEDORA 41 - СИСТЕМА КОМПЛЕКСНОЙ ЗАЩИТЫ
+# Скрипт автоматической установки
+# Разработано для HP ProBook 460 G11
+
+# Установка строгого режима bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Цвета для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# Функция вывода баннера
+show_banner() {
+    echo -e "${MAGENTA}"
+    echo '███████╗███████╗██████╗░░█████╗░██████╗░░█████╗░░░██╗██╗░███╗░░'
+    echo '██╔════╝██╔════╝██╔══██╗██╔══██╗██╔══██╗██╔══██╗░██╔╝██║████║░░'
+    echo '█████╗░░█████╗░░██║░░██║██║░░██║██████╔╝███████║██╔╝░██║██╔██╗░'
+    echo '██╔══╝░░██╔══╝░░██║░░██║██║░░██║██╔══██╗██╔══██║███████║██║╚██╗'
+    echo '██║░░░░░███████╗██████╔╝╚█████╔╝██║░░██║██║░░██║╚════██║██║░╚██╗'
+    echo '╚═╝░░░░░╚══════╝╚═════╝░░╚════╝░╚═╝░░╚═╝╚═╝░░╚═╝░░░░░╚═╝╚═╝░░╚═╝'
+    echo -e "${CYAN}    СИСТЕМА БЕЗОПАСНОСТИ ХАКЕРСКОГО УРОВНЯ ${RESET}"
+    echo -e "${YELLOW}    Разработано для Fedora 41 | HP ProBook 460 G11 ${RESET}"
+    echo ""
+}
+
+# Определение директорий установки
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="/opt/federation"
+CONFIG_DIR="/etc/federation"
+LOG_DIR="/var/log/federation"
+LIB_DIR="${INSTALL_DIR}/lib"
+BACKUP_DIR="${INSTALL_DIR}/backup"
+RULES_DIR="${CONFIG_DIR}/rules"
+SYSTEMD_DIR="/etc/systemd/system"
+COMPLETION_DIR="/etc/bash_completion.d"
+
+# Функция для вывода сообщений
+log() {
+    local level=$1
+    local message=$2
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    case $level in
+        "INFO")
+            echo -e "${GREEN}[INFO]${RESET} $message"
+            ;;
+        "WARNING")
+            echo -e "${YELLOW}[WARNING]${RESET} $message"
+            ;;
+        "ERROR")
+            echo -e "${RED}[ERROR]${RESET} $message"
+            ;;
+        "SUCCESS")
+            echo -e "${GREEN}[SUCCESS]${RESET} $message"
+            ;;
+        *)
+            echo -e "[$level] $message"
+            ;;
+    esac
+}
+
+# Функция проверки прав root
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        log "ERROR" "Этот скрипт должен запускаться с правами root"
+        exit 1
+    fi
+    
+    log "INFO" "Права администратора подтверждены"
+}
+
+# Функция проверки ОС
+check_os() {
+    log "INFO" "Проверка операционной системы..."
+    
+    if [[ -f /etc/fedora-release ]]; then
+        local fedora_version=$(cat /etc/fedora-release | grep -oP '(?<=release )[0-9]+')
+        log "INFO" "Обнаружена Fedora $fedora_version"
+        
+        if [[ "$fedora_version" -lt 41 ]]; then
+            log "WARNING" "Рекомендуется использовать Fedora 41 или выше. Текущая версия: $fedora_version"
+            
+            echo -e "${YELLOW}Продолжить установку на Fedora $fedora_version? (y/n)${RESET}"
+            read -r response
+            if [[ "$response" != "y" && "$response" != "Y" ]]; then
+                log "ERROR" "Установка отменена пользователем"
+                exit 1
+            fi
+        fi
+    else
+        log "WARNING" "Система не определена как Fedora. Некоторые функции могут работать некорректно."
+        
+        echo -e "${YELLOW}Продолжить установку на неподдерживаемой ОС? (y/n)${RESET}"
+        read -r response
+        if [[ "$response" != "y" && "$response" != "Y" ]]; then
+            log "ERROR" "Установка отменена пользователем"
+            exit 1
+        fi
+    fi
+    
+    log "SUCCESS" "Проверка ОС завершена"
+}
+
+# Функция проверки оборудования
+check_hardware() {
+    log "INFO" "Проверка оборудования..."
+    
+    # Проверка модели ноутбука, если это HP ProBook
+    if command -v dmidecode &> /dev/null; then
+        local system_product=$(dmidecode -s system-product-name)
+        if [[ "$system_product" == *"HP ProBook"* ]]; then
+            log "INFO" "Обнаружен HP ProBook: $system_product"
+        else
+            log "WARNING" "Система оптимизирована для HP ProBook 460 G11. Текущее оборудование: $system_product"
+        fi
+    fi
+    
+    # Проверка минимальных требований
+    local cpu_cores=$(nproc)
+    local mem_total=$(free -m | awk '/Mem:/ {print $2}')
+    local disk_space=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
+    
+    log "INFO" "Доступно ядер CPU: $cpu_cores"
+    log "INFO" "Доступно оперативной памяти: $mem_total MB"
+    log "INFO" "Доступно места на диске: $disk_space GB"
+    
+    if [[ $cpu_cores -lt 2 ]]; then
+        log "WARNING" "Рекомендуется минимум 2 ядра CPU"
+    fi
+    
+    if [[ $mem_total -lt 2048 ]]; then
+        log "WARNING" "Рекомендуется минимум 2 GB RAM"
+    fi
+    
+    if [[ $disk_space -lt 5 ]]; then
+        log "WARNING" "Рекомендуется минимум 5 GB свободного места"
+    fi
+    
+    log "SUCCESS" "Проверка оборудования завершена"
+}
+
+# Функция установки зависимостей
+install_dependencies() {
+    log "INFO" "Установка зависимостей..."
+    
+    local deps=(
+        "nftables" "iptables" "suricata" "tor" "proxychains" "fail2ban" 
+        "firejail" "curl" "jq" "fzf" "tcpdump" "auditd" "dmidecode" 
+        "openssl" "lsof" "net-tools" "psmisc" "sysstat" "htop" "chrony"
+        "chkrootkit" "rkhunter" "lynis" "aide" "clamav" "clamav-update"
+    )
+    
+    # Обновление списка пакетов
+    log "INFO" "Обновление репозиториев..."
+    dnf check-update -y || true
+    
+    # Установка основных зависимостей
+    log "INFO" "Установка основных пакетов..."
+    local failed_deps=()
+    
+    for dep in "${deps[@]}"; do
+        log "INFO" "Установка пакета: $dep"
+        if ! dnf install -y "$dep"; then
+            failed_deps+=("$dep")
+            log "WARNING" "Не удалось установить пакет: $dep"
+        fi
+    done
+    
+    # Проверка неудачных установок
+    if [[ ${#failed_deps[@]} -gt 0 ]]; then
+        log "WARNING" "Не удалось установить следующие пакеты: ${failed_deps[*]}"
+        
+        echo -e "${YELLOW}Некоторые пакеты не удалось установить. Продолжить установку? (y/n)${RESET}"
+        read -r response
+        if [[ "$response" != "y" && "$response" != "Y" ]]; then
+            log "ERROR" "Установка отменена пользователем"
+            exit 1
+        fi
+    fi
+    
+    # Дополнительные настройки установленных пакетов
+    log "INFO" "Настройка установленных пакетов..."
+    
+    # Настройка Suricata
+    if command -v suricata &> /dev/null; then
+        log "INFO" "Настройка Suricata..."
+        # Обновление правил, если доступно
+        if command -v suricata-update &> /dev/null; then
+            suricata-update
+        fi
+    fi
+    
+    # Настройка ClamAV
+    if command -v freshclam &> /dev/null; then
+        log "INFO" "Обновление баз данных ClamAV..."
+        systemctl stop clamav-freshclam || true
+        freshclam
+        systemctl start clamav-freshclam || true
+    fi
+    
+    # Настройка AIDE
+    if command -v aide &> /dev/null; then
+        log "INFO" "Инициализация базы данных AIDE..."
+        aide --init || true
+        if [[ -f /var/lib/aide/aide.db.new.gz ]]; then
+            cp /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+        fi
+    fi
+    
+    # Настройка fail2ban
+    if command -v fail2ban-client &> /dev/null; then
+        log "INFO" "Настройка fail2ban..."
+        systemctl enable fail2ban
+    fi
+    
+    # Настройка auditd
+    if command -v auditctl &> /dev/null; then
+        log "INFO" "Настройка системы аудита..."
+        systemctl enable auditd
+    fi
+    
+    log "SUCCESS" "Зависимости установлены и настроены"
+}
+
+# Функция создания директорий
+create_directories() {
+    log "INFO" "Создание директорий..."
+    
+    # Создание основных директорий
+    mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" "$LIB_DIR" \
+             "$BACKUP_DIR" "$RULES_DIR" "$LOG_DIR/forensic" \
+             "$INSTALL_DIR/tools" "$CONFIG_DIR/templates"
+    
+    # Создание дополнительных директорий
+    mkdir -p "$LOG_DIR/ids" "$LOG_DIR/alerts" "$BACKUP_DIR/config" \
+             "$BACKUP_DIR/logs" "$INSTALL_DIR/hashes"
+    
+    log "SUCCESS" "Директории созданы"
+}
+
+# Функция создания файлов
+create_files() {
+    log "INFO" "Создание файлов скриптов и конфигурации..."
+    
+    # 1. Создание monitor.sh
+    cat > "$INSTALL_DIR/monitor.sh" << 'EOF'
+#!/bin/bash
+#
+# FEDORA 41 - СИСТЕМА МОНИТОРИНГА И ЗАЩИТЫ
+# Основной скрипт мониторинга
+# Разработано для HP ProBook 460 G11
+
+# Настройка строгого режима bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Глобальные переменные
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="/etc/federation/config.json"
+LOG_FILE="/var/log/federation/monitor.log"
+ALERT_LOG="/var/log/federation/alerts/alerts.log"
+CURRENT_TIME="$(date +"%Y-%m-%d %H:%M:%S")"
+VERSION="1.0.0"
+
+# Подключение библиотек
+source "${SCRIPT_DIR}/lib/network_utils.sh"
+source "${SCRIPT_DIR}/lib/system_utils.sh"
+source "${SCRIPT_DIR}/lib/ids_utils.sh"
+source "${SCRIPT_DIR}/lib/forensics.sh"
+source "${SCRIPT_DIR}/lib/anonymize.sh"
+
+# Функция вывода баннера
+show_banner() {
+    echo -e "\e[1;31m"
+    echo '███████╗███████╗██████╗ ███████╗██████╗  █████╗  ██╗  ██╗ ██╗'
+    echo '██╔════╝██╔════╝██╔══██╗██╔════╝██╔══██╗██╔══██╗ ██║  ██║███║'
+    echo '█████╗  █████╗  ██║  ██║█████╗  ██████╔╝███████║ ███████║╚██║'
+    echo '██╔══╝  ██╔══╝  ██║  ██║██╔══╝  ██╔══██╗██╔══██║ ╚════██║ ██║'
+    echo '██║     ███████╗██████╔╝███████╗██║  ██║██║  ██║      ██║ ██║'
+    echo '╚═╝     ╚══════╝╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝      ╚═╝ ╚═╝'
+    echo -e "\e[1;34m    ADVANCED SECURITY MONITORING SYSTEM v${VERSION}\e[0m"
+    echo -e "\e[1;33m    Разработано для Fedora 41 | HP ProBook 460 G11\e[0m"
+    echo ""
+}
+
+# Функция логирования
+log() {
+    local level=$1
+    local message=$2
+    local current_time="$(date +"%Y-%m-%d %H:%M:%S")"
+    
+    # Создаем директорию для логов, если она не существует
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ALERT_LOG")"
+    
+    echo -e "[$current_time] [$level] $message" >> "$LOG_FILE"
+    
+    case $level in
+        "INFO") echo -e "\e[1;32m[INFO]\e[0m $message" ;;
+        "WARNING") echo -e "\e[1;33m[WARNING]\e[0m $message" ;;
+        "ERROR") echo -e "\e[1;31m[ERROR]\e[0m $message" ;;
+        "ALERT") 
+            echo -e "\e[1;37;41m[ALERT]\e[0m $message"
+            echo "[$current_time] [ALERT] $message" >> "$ALERT_LOG"
+            ;;
+        *) echo -e "[$level] $message" ;;
+    esac
+}
+
+# Функция проверки зависимостей
+check_dependencies() {
+    log "INFO" "Проверка зависимостей..."
+    local deps=(nft iptables suricata tor proxychains fail2ban firejail curl jq fzf netstat auditctl)
+    local missing=()
+    
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &> /dev/null; then
+            missing+=("$dep")
+        fi
+    done
+    
+    if [ ${#missing[@]} -ne 0 ]; then
+        log "ERROR" "Отсутствуют следующие зависимости: ${missing[*]}"
+        log "INFO" "Установите их командой: sudo dnf install ${missing[*]}"
+        exit 1
+    fi
+    
+    log "INFO" "Все зависимости установлены"
+}
+
+# Функция инициализации системы
+initialize_system() {
+    log "INFO" "Инициализация системы защиты..."
+    
+    # Создание директорий для логов
+    mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$ALERT_LOG")"
+    
+    # Настройка прав доступа
+    chmod 750 "$(dirname "$LOG_FILE")"
+    chmod 640 "$LOG_FILE" "$ALERT_LOG"
+    
+    # Загрузка конфигурации
+    if [[ -f "$CONFIG_FILE" ]]; then
+        log "INFO" "Загрузка конфигурации из $CONFIG_FILE"
+    else
+        log "ERROR" "Конфигурационный файл не найден: $CONFIG_FILE"
+        exit 1
+    fi
+    
+    # Инициализация IDS
+    initialize_ids
+    
+    # Настройка анонимизации
+    setup_anonymization
+    
+    # Настройка сетевых правил
+    setup_network_protection
+    
+    # Настройка системного мониторинга
+    setup_system_monitoring
+    
+    log "INFO" "Система инициализирована"
+}
+
+# Функция мониторинга сети
+monitor_network() {
+    log "INFO" "Запуск мониторинга сети..."
+    
+    # Анализ текущих соединений
+    local connections=$(ss -tunap | grep -v "127.0.0.1")
+    local connection_count=$(echo "$connections" | wc -l)
+    
+    log "INFO" "Активных внешних соединений: $connection_count"
+    
+    # Проверка на подозрительные соединения
+    check_suspicious_connections "$connections"
+    
+    # Мониторинг сетевого трафика
+    monitor_traffic
+}
+
+# Функция мониторинга системы
+monitor_system() {
+    log "INFO" "Запуск мониторинга системы..."
+    
+    # Проверка загрузки системы
+    check_system_load
+    
+    # Проверка необычных процессов
+    check_suspicious_processes
+    
+    # Проверка целостности системных файлов
+    check_system_integrity
+    
+    # Проверка логов на подозрительную активность
+    analyze_system_logs
+}
+
+# Главная функция
+main() {
+    # Вывод баннера
+    show_banner
+    
+    # Проверка прав администратора
+    if [[ $EUID -ne 0 ]]; then
+        log "ERROR" "Этот скрипт должен запускаться с правами root"
+        exit 1
+    fi
+    
+    # Проверка зависимостей
+    check_dependencies
+    
+    # Инициализация системы
+    initialize_system
+    
+    log "INFO" "Система мониторинга запущена"
+    
+    # Основной цикл мониторинга
+    while true; do
+        monitor_network
+        monitor_system
+        
+        # Проверка на признаки APT-атак
+        check_for_apt_activity
+        
+        # Периодический анализ логов IDS
+        analyze_ids_logs
+        
+        # Интервал проверки из конфигурации
+        local check_interval=$(jq -r '.system.check_interval // 60' "$CONFIG_FILE")
+        log "INFO" "Ожидание $check_interval секунд до следующей проверки"
+        sleep "$check_interval"
+    done
+}
+
+# Запуск программы
+main "$@"
+EOF
+
+    # 2. Создание lockdown.sh
+    cat > "$INSTALL_DIR/lockdown.sh" << 'EOF'
+#!/bin/bash
+#
+# FEDORA 41 - СИСТЕМА МОНИТОРИНГА И ЗАЩИТЫ
+# Скрипт экстренной блокировки системы
+# Разработано для HP ProBook 460 G11
+
+# Настройка строгого режима bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Глобальные переменные
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="/etc/federation/config.json"
+LOG_FILE="/var/log/federation/lockdown.log"
+FORENSIC_DIR="/var/log/federation/forensic/$(date +%Y%m%d_%H%M%S)"
+CURRENT_TIME="$(date +"%Y-%m-%d %H:%M:%S")"
+
+# Подключение библиотек
+source "${SCRIPT_DIR}/lib/network_utils.sh"
+source "${SCRIPT_DIR}/lib/system_utils.sh"
+source "${SCRIPT_DIR}/lib/forensics.sh"
+
+# Функция вывода баннера
+show_banner() {
+    echo -e "\e[1;37;41m"
+    echo '██       ██████   ██████ ██   ██ ██████   ██████  ██     ██ ███    ██'
+    echo '██      ██    ██ ██     ██  ██  ██   ██ ██    ██ ██     ██ ████   ██'
+    echo '██      ██    ██ ██     █████   ██   ██ ██    ██ ██  █  ██ ██ ██  ██'
+    echo '██      ██    ██ ██     ██  ██  ██   ██ ██    ██ ██ ███ ██ ██  ██ ██'
+    echo '███████  ██████   ██████ ██   ██ ██████   ██████   ███ ███  ██   ████'
+    echo -e "\e[1;31m        ЭКСТРЕННЫЙ РЕЖИМ ИЗОЛЯЦИИ СИСТЕМЫ        \e[0m"
+    echo -e "\e[1;33m        Разработано для Fedora 41 | HP ProBook 460 G11\e[0m"
+    echo ""
+}
+
+# Функция логирования
+log() {
+    local level=$1
+    local message=$2
+    local current_time="$(date +"%Y-%m-%d %H:%M:%S")"
+    
+    # Создаем директорию для логов, если она не существует
+    mkdir -p "$(dirname "$LOG_FILE")"
+    
+    echo -e "[$current_time] [$level] $message" >> "$LOG_FILE"
+    
+    case $level in
+        "INFO") echo -e "\e[1;32m[INFO]\e[0m $message" ;;
+        "WARNING") echo -e "\e[1;33m[WARNING]\e[0m $message" ;;
+        "ERROR") echo -e "\e[1;31m[ERROR]\e[0m $message" ;;
+        "ALERT") echo -e "\e[1;37;41m[ALERT]\e[0m $message" ;;
+        "CRITICAL") echo -e "\e[1;37;41m[КРИТИЧНО]\e[0m $message" ;;
+        *) echo -e "[$level] $message" ;;
+    esac
+}
+
+# Функция создания снапшота системы для форензики
+create_system_snapshot() {
+    log "INFO" "Создание снапшота системы для анализа..."
+    
+    # Создание директории для форензики
+    mkdir -p "$FORENSIC_DIR"
+    
+    # Сохранение информации о системе
+    uname -a > "$FORENSIC_DIR/system_info.txt"
+    
+    # Сохранение списка процессов
+    ps auxf > "$FORENSIC_DIR/processes.txt"
+    
+    # Сохранение списка соединений
+    ss -tunap > "$FORENSIC_DIR/connections.txt"
+    
+    # Сохранение загруженных модулей ядра
+    lsmod > "$FORENSIC_DIR/kernel_modules.txt"
+    
+    # Сохранение открытых файлов
+    lsof > "$FORENSIC_DIR/open_files.txt"
+    
+    # Сохранение содержимого системных логов
+    cp /var/log/messages "$FORENSIC_DIR/" 2>/dev/null || true
+    cp /var/log/secure "$FORENSIC_DIR/" 2>/dev/null || true
+    cp /var/log/audit/audit.log "$FORENSIC_DIR/" 2>/dev/null || true
+    
+    # Сохранение информации о дисках
+    df -h > "$FORENSIC_DIR/disk_usage.txt"
+    
+    # Сохранение таблиц маршрутизации
+    ip route > "$FORENSIC_DIR/routes.txt"
+    
+    # Сохранение правил iptables
+    iptables-save > "$FORENSIC_DIR/iptables.txt"
+    
+    # Сохранение содержимого /tmp
+    find /tmp -type f -exec ls -la {} \; > "$FORENSIC_DIR/tmp_files.txt" 2>/dev/null || true
+    
+    # Создание хэш-сумм важных системных файлов
+    find /bin /sbin /usr/bin /usr/sbin -type f -exec sha256sum {} \; > "$FORENSIC_DIR/system_binaries_hash.txt" 2>/dev/null || true
+    
+    log "INFO" "Снапшот системы создан в $FORENSIC_DIR"
+}
+
+# Функция отключения сетевых интерфейсов
+disable_network() {
+    log "CRITICAL" "Отключение всех сетевых интерфейсов..."
+    
+    # Сохранение текущего сетевого состояния
+    ip addr > "$FORENSIC_DIR/network_before_lockdown.txt"
+    
+    # Отключение всех физических сетевых интерфейсов
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v "lo"); do
+        log "INFO" "Отключение интерфейса $iface"
+        ip link set "$iface" down
+    done
+    
+    # Блокировка всех беспроводных интерфейсов с помощью rfkill
+    if command -v rfkill &> /dev/null; then
+        rfkill block all
+        log "INFO" "Все беспроводные интерфейсы заблокированы"
+    fi
+    
+    # Блокировка всех входящих и исходящих соединений с помощью iptables
+    iptables -P INPUT DROP
+    iptables -P OUTPUT DROP
+    iptables -P FORWARD DROP
+    
+    # Сохранение только соединений localhost
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A OUTPUT -o lo -j ACCEPT
+    
+    log "INFO" "Все сетевые интерфейсы отключены и заблокированы"
+}
+
+# Функция завершения подозрительных процессов
+terminate_suspicious_processes() {
+    log "WARNING" "Идентификация и завершение подозрительных процессов..."
+    
+    # Список потенциально вредоносных процессов (шаблон)
+    suspicious_procs=(
+        "nc -"
+        "ncat -"
+        "netcat"
+        "miner"
+        "\.sh$"
+        "\.py$"
+        "python3 -"
+        "bash -i"
+        "perl -e"
+        "ruby -e"
+        "wget http"
+        "curl http"
+    )
+    
+    # Поиск и завершение подозрительных процессов
+    for pattern in "${suspicious_procs[@]}"; do
+        pids=$(ps aux | grep -E "$pattern" | grep -v "grep" | awk '{print $2}')
+        if [[ -n "$pids" ]]; then
+            for pid in $pids; do
+                cmd=$(ps -p "$pid" -o cmd=)
+                log "WARNING" "Завершение подозрительного процесса: $pid ($cmd)"
+                kill -9 "$pid" 2>/dev/null || true
+            done
+        fi
+    done
+    
+    log "INFO" "Завершение процессов выполнено"
+}
+
+# Функция шифрования критичных данных
+encrypt_critical_data() {
+    log "INFO" "Шифрование критичных данных..."
+    
+    # Проверяем наличие критичных данных
+    critical_dirs=("/home/$(whoami)/sensitive" "/root/sensitive" "/opt/secure")
+    
+    for dir in "${critical_dirs[@]}"; do
+        if [[ -d "$dir" ]]; then
+            log "INFO" "Шифрование директории $dir"
+            
+            # Создание архива, зашифрованного с помощью OpenSSL
+            archive_name="${FORENSIC_DIR}/$(basename "$dir")_$(date +%Y%m%d_%H%M%S).enc"
+            tar -czf - "$dir" 2>/dev/null | openssl enc -aes-256-cbc -salt -pbkdf2 -out "$archive_name" -k "$(head -c 32 /dev/urandom | base64)"
+            
+            log "INFO" "Директория $dir зашифрована в $archive_name"
+        fi
+    done
+    
+    log "INFO" "Шифрование критичных данных завершено"
+}
+
+# Функция блокировки пользователей
+lockdown_users() {
+    log "WARNING" "Блокировка всех учетных записей кроме root..."
+    
+    # Сохранение текущего списка пользователей
+    cat /etc/passwd > "$FORENSIC_DIR/passwd_before_lockdown.txt"
+    
+    # Блокировка всех пользователей кроме root
+    for user in $(awk -F: '{if ($3 >= 1000 && $3 != 65534) print $1}' /etc/passwd); do
+        log "INFO" "Блокировка учетной записи: $user"
+        passwd -l "$user" 2>/dev/null || true
+    done
+    
+    log "INFO" "Блокировка учетных записей завершена"
+}
+
+# Функция активации SELinux в строгом режиме
+enable_strict_selinux() {
+    log "INFO" "Активация SELinux в строгом режиме..."
+    
+    # Проверка, включен ли SELinux
+    if command -v getenforce &> /dev/null; then
+        current_mode=$(getenforce)
+        log "INFO" "Текущий режим SELinux: $current_mode"
+        
+        if [[ "$current_mode" != "Enforcing" ]]; then
+            log "INFO" "Установка режима SELinux в Enforcing"
+            setenforce 1
+        fi
+    else
+        log "WARNING" "SELinux не установлен на этой системе"
+    fi
+    
+    log "INFO" "Режим SELinux установлен"
+}
+
+# Основная функция
+main() {
+    # Вывод баннера
+    show_banner
+    
+    # Проверка прав администратора
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "\e[1;31mОШИБКА: Этот скрипт должен запускаться с правами root\e[0m"
+        exit 1
+    fi
+    
+    log "CRITICAL" "=== НАЧАЛО ПРОЦЕДУРЫ ЭКСТРЕННОЙ БЛОКИРОВКИ ==="
+    
+    # Создание снапшота системы
+    create_system_snapshot
+    
+    # Отключение сети
+    disable_network
+    
+    # Завершение подозрительных процессов
+    terminate_suspicious_processes
+    
+    # Шифрование критичных данных
+    encrypt_critical_data
+    
+    # Блокировка учетных записей
+    lockdown_users
+    
+    # Активация SELinux в строгом режиме
+    enable_strict_selinux
+    
+    log "CRITICAL" "=== СИСТЕМА ЗАБЛОКИРОВАНА И ИЗОЛИРОВАНА ==="
+    log "CRITICAL" "Для восстановления используйте restore.sh"
+    
+    echo -e "\e[1;37;41m"
+    echo "█▀█ █▀▀ █▄▄ █▀█ █▀█ ▀█▀   █▀█ █▀▀ █▀▀ █░█ █▀█ █ ▀█▀ █▄█   █ █▄░█ █▀▀ █ █▀▄ █▀▀ █▄░█ ▀█▀"
+    echo "█▀▄ ██▄ █▄█ █▄█ █▀▄ ░█░   █▀▀ ██▄ █▄▄ █▄█ █▀▄ █ ░█░ ░█░   █ █░▀█ █▄▄ █ █▄▀ ██▄ █░▀█ ░█░"
+    echo -e "\e[0m"
+    echo -e "\e[1;33mСистема заблокирована в режиме изоляции\e[0m"
+    echo -e "\e[1;37mДля восстановления используйте: sudo ${SCRIPT_DIR}/restore.sh\e[0m"
+}
+
+# Вызов основной функции
+main "$@"
+EOF
+
+    # 3. Создание restore.sh
+    cat > "$INSTALL_DIR/restore.sh" << 'EOF'
+#!/bin/bash
+#
+# FEDORA 41 - СИСТЕМА МОНИТОРИНГА И ЗАЩИТЫ
+# Скрипт восстановления после экстренной блокировки
+# Разработано для HP ProBook 460 G11
+
+# Настройка строгого режима bash
+set -euo pipefail
+IFS=$'\n\t'
+
+# Глобальные переменные
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="/etc/federation/config.json"
+LOG_FILE="/var/log/federation/restore.log"
+FORENSIC_DIR="/var/log/federation/forensic"
+CURRENT_TIME="$(date +"%Y-%m-%d %H:%M:%S")"
+
+# Подключение библиотек
+source "${SCRIPT_DIR}/lib/network_utils.sh"
+source "${SCRIPT_DIR}/lib/system_utils.sh"
+source "${SCRIPT_DIR}/lib/forensics.sh"
+source "${SCRIPT_DIR}/lib/ids_utils.sh"
+
+# Функция вывода баннера
+show_banner() {
+    echo -e "\e[1;32m"
+    echo '█▀█ █▀▀ █▀ ▀█▀ █▀█ █▀█ █▀▀   █▀ █▄█ █▀ ▀█▀ █▀▀ █▀▄▀█'
+    echo '█▀▄ ██▄ ▄█ ░█░ █▄█ █▀▄ ██▄   ▄█ ░█░ ▄█ ░█░ ██▄ █░▀░█'
+    echo -e "\e[1;34m    ВОССТАНОВЛЕНИЕ СИСТЕМЫ ПОСЛЕ БЛОКИРОВКИ\e[0m"
+    echo -e "\e[1;33m    Разработано для Fedora 41 | HP ProBook 460 G11\e[0m"
+    echo ""
+}
+
+# Функция логирования
+log() {
+    local level=$1
+    local message=$2
+    local current_time="$(date +"%Y-%m-%d %H:%M:%S")"
+    
+    # Создаем директорию для логов, если она не существует
+    mkdir -p "$(dirname "$LOG_FILE")"
+    
+    echo -e "[$current_time] [$level] $message" >> "$LOG_FILE"
+    
+    case $level in
+        "INFO") echo -e "\e[1;32m[INFO]\e[0m $message" ;;
+        "WARNING") echo -e "\e[1;33m[WARNING]\e[0m $message" ;;
+        "ERROR") echo -e "\e[1;31m[ERROR]\e[0m $message" ;;
+        "ALERT") echo -e "\e[1;37;41m[ALERT]\e[0m $message" ;;
+        "SUCCESS") echo -e "\e[1;42m[УСПЕХ]\e[0m $message" ;;
+        *) echo -e "[$level] $message" ;;
+    esac
+}
+
+# Функция проверки прав доступа
+check_permissions() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "\e[1;31mОШИБКА: Этот скрипт должен запускаться с правами root\e[0m"
+        exit 1
+    fi
+}
+
+# Функция проверки системы на наличие угроз перед восстановлением
+check_system_state() {
+    log "INFO" "Проверка системы на наличие угроз перед восстановлением..."
+    
+    # Проверка на наличие подозрительных процессов
+    local suspicious_count=$(ps aux | grep -E "nc -|ncat|\.py|wget http|curl -|perl -e" | grep -v "grep" | wc -l)
+    
+    # Проверка целостности системных файлов
+    log "INFO" "Проверка целостности системных файлов..."
+    # Здесь можно использовать AIDE или другую систему проверки целостности
+    
+    # Проверка логов на наличие подозрительной активности
+    log "INFO" "Анализ системных логов на наличие подозрительной активности..."
+    local auth_failures=$(grep "Failed password" /var/log/secure 2>/dev/null | wc -l)
+    
+    log "INFO" "Результаты проверки:"
+    log "INFO" "- Подозрительных процессов: $suspicious_count"
+    log "INFO" "- Ошибок аутентификации: $auth_failures"
+    
+    if [[ $suspicious_count -gt 0 ]]; then
+        log "WARNING" "Обнаружены подозрительные процессы!"
+        ps aux | grep -E "nc -|ncat|\.py|wget http|curl -|perl -e" | grep -v "grep"
+        
+        echo -e "\e[1;31mОбнаружены подозрительные процессы. Продолжить восстановление? (y/N): \e[0m"
+        read -r response
+        if [[ "$response" != "y" && "$response" != "Y" ]]; then
+            log "ERROR" "Восстановление отменено пользователем"
+            exit 1
+        fi
+    fi
+    
+    log "SUCCESS" "Проверка системы завершена"
+}
+
+# Функция восстановления сетевых интерфейсов
+restore_network() {
+    log "INFO" "Восстановление сетевых интерфейсов..."
+    
+    # Удаление блокирующих правил iptables
+    log "INFO" "Сброс правил iptables..."
+    iptables -P INPUT ACCEPT
+    iptables -P OUTPUT ACCEPT
+    iptables -P FORWARD ACCEPT
+    iptables -F
+    iptables -X
+    
+    # Разблокировка беспроводных интерфейсов
+    if command -v rfkill &> /dev/null; then
+        log "INFO" "Разблокировка беспроводных интерфейсов..."
+        rfkill unblock all
+    fi
+    
+    # Поднятие сетевых интерфейсов
+    log "INFO" "Поднятие сетевых интерфейсов..."
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v "lo"); do
+        log "INFO" "Включение интерфейса $iface"
+        ip link set "$iface" up
+    done
+    
+    # Перезапуск NetworkManager
+    if systemctl is-active NetworkManager &>/dev/null; then
+        log "INFO" "Перезапуск NetworkManager..."
+        systemctl restart NetworkManager
+    fi
+    
+    # Проверка восстановления сети
+    sleep 5
+    if ping -c 1 8.8.8.8 &>/dev/null; then
+        log "SUCCESS" "Сетевые интерфейсы успешно восстановлены"
+    else
+        log "WARNING" "Не удалось установить соединение с интернетом"
+    fi
+}
+
+# Функция восстановления заблокированных учетных записей
+restore_users() {
+    log "INFO" "Восстановление пользовательских учетных записей..."
+    
+    # Разблокировка заблокированных пользователей
+    for user in $(awk -F: '{if ($3 >= 1000 && $3 != 65534) print $1}' /etc/passwd); do
+        log "INFO" "Разблокировка учетной записи: $user"
+        passwd -u "$user" 2>/dev/null || true
+    done
+    
+    log "SUCCESS" "Восстановление учетных записей завершено"
+}
+
+# Функция перезапуска системных служб
+restart_services() {
+    log "INFO" "Перезапуск системных служб..."
+    
+    # Список служб для перезапуска
+    local services=(
+        "firewalld"
+        "fail2ban"
+        "suricata"
+        "auditd"
+        "sshd"
+    )
+    
+    for service in "${services[@]}"; do
+        if systemctl is-enabled "$service" &>/dev/null; then
+            log "INFO" "Перезапуск $service..."
+            systemctl restart "$service" || log "WARNING" "Не удалось перезапустить $service"
+        else
+            log "INFO" "Служба $service не включена в системе"
+        fi
+    done
+    
+    log "SUCCESS" "Системные службы перезапущены"
+}
+
+# Функция настройки защитного режима
+setup_protective_mode() {
+    log "INFO" "Настройка защитного режима после восстановления..."
+    
+    # Настройка правил iptables с базовым уровнем защиты
+    log "INFO" "Настройка правил iptables..."
+    
+    # Очистка существующих правил
+    iptables -F
+    iptables -X
+    
+    # Установка политик по умолчанию
+    iptables -P INPUT DROP
+    iptables -P FORWARD DROP
+    iptables -P OUTPUT ACCEPT
+    
+    # Разрешить loopback
+    iptables -A INPUT -i lo -j ACCEPT
+    
+    # Разрешить установленные соединения
+    iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+}
+EOF
+
+    # 4. Создание библиотеки forensics.sh
+    cat >> "$LIB_DIR/forensics.sh" << 'EOF'
+    # Информация о железе
+    if command -v dmidecode &> /dev/null; then
+        dmidecode > "$target_dir/dmidecode.txt" 2>/dev/null || true
+    fi
+    
+    # Информация о CPU
+    cat /proc/cpuinfo > "$target_dir/cpuinfo.txt"
+    
+    # Информация о памяти
+    cat /proc/meminfo > "$target_dir/meminfo.txt"
+    free -m > "$target_dir/free.txt"
+    
+    # Информация о времени
+    date > "$target_dir/date.txt"
+    if command -v timedatectl &> /dev/null; then
+        timedatectl > "$target_dir/timedatectl.txt"
+    fi
+    
+    # Информация о загрузке системы
+    uptime > "$target_dir/uptime.txt"
+    cat /proc/loadavg > "$target_dir/loadavg.txt"
+    
+    # Информация о загруженных модулях ядра
+    lsmod > "$target_dir/lsmod.txt"
+    
+    # Информация о пользователях
+    cat /etc/passwd > "$target_dir/passwd.txt"
+    cat /etc/shadow > "$target_dir/shadow.txt" 2>/dev/null || true
+    cat /etc/group > "$target_dir/group.txt"
+    
+    # История пользователей
+    find /home -name ".bash_history" -exec cp {} "$target_dir/bash_history_{}" \; 2>/dev/null || true
+    
+    # Переменные окружения
+    env > "$target_dir/env.txt"
+    
+    log "INFO" "Информация о системе собрана"
+}
+
+# Сбор информации о процессах
+collect_process_info() {
+    local target_dir=$1
+    
+    log "INFO" "Сбор информации о процессах..."
+    
+    # Список процессов (различные форматы)
+    ps aux > "$target_dir/ps_aux.txt"
+    ps -efl > "$target_dir/ps_efl.txt"
+    ps -eo pid,ppid,user,%cpu,%mem,vsz,rss,tty,stat,start,time,cmd > "$target_dir/ps_detailed.txt"
+    
+    # Информация о процессах из /proc
+    mkdir -p "$target_dir/proc"
+    
+    for pid in /proc/[0-9]*; do
+        if [[ -d "$pid" ]]; then
+            pid_num=$(basename "$pid")
+            mkdir -p "$target_dir/proc/$pid_num"
+            
+            # Копирование основных файлов процесса
+            cp "$pid/cmdline" "$target_dir/proc/$pid_num/" 2>/dev/null || true
+            cp "$pid/environ" "$target_dir/proc/$pid_num/" 2>/dev/null || true
+            cp "$pid/status" "$target_dir/proc/$pid_num/" 2>/dev/null || true
+            cp "$pid/maps" "$target_dir/proc/$pid_num/" 2>/dev/null || true
+            
+            # Копирование файловых дескрипторов
+            mkdir -p "$target_dir/proc/$pid_num/fd"
+            ls -la "$pid/fd/" > "$target_dir/proc/$pid_num/fd/list.txt" 2>/dev/null || true
+        fi
+    done
+    
+    # Информация о запущенных службах
+    if command -v systemctl &> /dev/null; then
+        systemctl list-units --type=service > "$target_dir/systemctl_services.txt"
+    fi
+    
+    # Информация о cron-заданиях
+    if [[ -d "/var/spool/cron" ]]; then
+        mkdir -p "$target_dir/cron"
+        cp -r /var/spool/cron/* "$target_dir/cron/" 2>/dev/null || true
+    fi
+    cp -r /etc/cron* "$target_dir/" 2>/dev/null || true
+    
+    log "INFO" "Информация о процессах собрана"
+}
+
+# Сбор информации о сети
+collect_network_info() {
+    local target_dir=$1
+    
+    log "INFO" "Сбор информации о сети..."
+    
+    # Информация о сетевых интерфейсах
+    ip addr > "$target_dir/ip_addr.txt"
+    ip route > "$target_dir/ip_route.txt"
+    
+    # Информация о DNS
+    cp /etc/hosts "$target_dir/hosts.txt" 2>/dev/null || true
+    cp /etc/resolv.conf "$target_dir/resolv.conf" 2>/dev/null || true
+    
+    # Информация о сетевых соединениях
+    ss -tunap > "$target_dir/ss_tunap.txt"
+    netstat -tunap > "$target_dir/netstat_tunap.txt" 2>/dev/null || true
+    
+    # Информация о прослушиваемых портах
+    ss -tulpn > "$target_dir/listening_ports.txt"
+    
+    # Информация о правилах iptables
+    iptables-save > "$target_dir/iptables.txt" 2>/dev/null || true
+    
+    # Информация о правилах nftables
+    if command -v nft &> /dev/null; then
+        nft list ruleset > "$target_dir/nftables.txt" 2>/dev/null || true
+    fi
+    
+    # ARP-таблица
+    ip neigh > "$target_dir/arp.txt"
+    
+    # Проверка открытых файлов сетевыми процессами
+    lsof -i > "$target_dir/lsof_network.txt" 2>/dev/null || true
+    
+    log "INFO" "Информация о сети собрана"
+}
+
+# Сбор информации о файловой системе
+collect_filesystem_info() {
+    local target_dir=$1
+    
+    log "INFO" "Сбор информации о файловой системе..."
+    
+    # Информация о дисках и разделах
+    df -h > "$target_dir/df.txt"
+    mount > "$target_dir/mount.txt"
+    cat /proc/mounts > "$target_dir/proc_mounts.txt"
+    
+    # Информация о файловых системах
+    if command -v lsblk &> /dev/null; then
+        lsblk -f > "$target_dir/lsblk.txt"
+    fi
+    
+    # Информация о загрузчике
+    if [[ -d "/boot/grub2" ]]; then
+        cp /boot/grub2/grub.cfg "$target_dir/grub.cfg" 2>/dev/null || true
+    fi
+    
+    # Поиск SUID/SGID файлов
+    find / -type f \( -perm -4000 -o -perm -2000 \) -ls 2>/dev/null > "$target_dir/suid_sgid_files.txt"
+    
+    # Поиск файлов с измененными временными метками
+    find /bin /sbin /usr/bin /usr/sbin -type f -mtime -3 -ls 2>/dev/null > "$target_dir/recently_modified_binaries.txt"
+    
+    # Поиск файлов в /tmp, /dev/shm
+    ls -la /tmp > "$target_dir/tmp_files.txt" 2>/dev/null || true
+    ls -la /dev/shm > "$target_dir/dev_shm_files.txt" 2>/dev/null || true
+    
+    # Хэши критичных системных файлов
+    if command -v sha256sum &> /dev/null; then
+        mkdir -p "$target_dir/hashes"
+        
+        # Создание хэшей для основных системных бинарников
+        find /bin /sbin /usr/bin /usr/sbin -type f -name "ssh*" -o -name "su" -o -name "sudo" 2>/dev/null | \
+        xargs sha256sum 2>/dev/null > "$target_dir/hashes/critical_binaries.txt" || true
+    fi
+    
+    log "INFO" "Информация о файловой системе собрана"
+}
+
+# Сбор логов системы
+collect_logs() {
+    local target_dir=$1
+    
+    log "INFO" "Сбор логов системы..."
+    
+    # Создание директории для логов
+    mkdir -p "$target_dir/logs"
+    
+    # Копирование основных лог-файлов
+    cp /var/log/messages "$target_dir/logs/" 2>/dev/null || true
+    cp /var/log/secure "$target_dir/logs/" 2>/dev/null || true
+    cp /var/log/audit/audit.log "$target_dir/logs/" 2>/dev/null || true
+    cp /var/log/dmesg "$target_dir/logs/" 2>/dev/null || true
+    cp /var/log/wtmp "$target_dir/logs/" 2>/dev/null || true
+    cp /var/log/btmp "$target_dir/logs/" 2>/dev/null || true
+    
+    # История команд root
+    cp /root/.bash_history "$target_dir/logs/root_bash_history.txt" 2>/dev/null || true
+    
+    # Логи SSH
+    cp /var/log/secure "$target_dir/logs/ssh_secure.log" 2>/dev/null || true
+    
+    # Логи журнала systemd
+    if command -v journalctl &> /dev/null; then
+        journalctl -b > "$target_dir/logs/journalctl.log" 2>/dev/null || true
+    fi
+    
+    # Логи веб-сервера (если есть)
+    if [[ -d "/var/log/httpd" ]]; then
+        cp -r /var/log/httpd "$target_dir/logs/" 2>/dev/null || true
+    fi
+    if [[ -d "/var/log/nginx" ]]; then
+        cp -r /var/log/nginx "$target_dir/logs/" 2>/dev/null || true
+    fi
+    
+    # Логи suricata, если настроены
+    local suricata_logs=$(jq -r '.network.ids.log_path' "$CONFIG_FILE" 2>/dev/null)
+    if [[ -d "$suricata_logs" ]]; then
+        cp -r "$suricata_logs" "$target_dir/logs/suricata" 2>/dev/null || true
+    fi
+    
+    log "INFO" "Логи системы собраны"
+}
+
+# Анализ возможного вторжения
+analyze_intrusion() {
+    local forensic_dir=$1
+    
+    if [[ -z "$forensic_dir" ]]; then
+        log "ERROR" "Необходимо указать директорию с форензическими данными"
+        return 1
+    fi
+    
+    log "INFO" "Анализ возможного вторжения по форензическим данным..."
+    
+    # Проверка наличия директории
+    if [[ ! -d "$forensic_dir" ]]; then
+        log "ERROR" "Директория $forensic_dir не существует"
+        return 1
+    fi
+    
+    # Анализ потенциально подозрительных процессов
+    if [[ -f "$forensic_dir/ps_aux.txt" ]]; then
+        log "INFO" "Анализ подозрительных процессов..."
+        
+        # Поиск потенциально вредоносных процессов
+        grep -E "nc -|ncat|\.sh|\.py|wget http|curl -|perl -e|bash -i" "$forensic_dir/ps_aux.txt" > "$forensic_dir/suspicious_processes.txt"
+        
+        # Подсчет количества подозрительных процессов
+        local suspicious_count=$(wc -l < "$forensic_dir/suspicious_processes.txt")
+        log "INFO" "Найдено потенциально подозрительных процессов: $suspicious_count"
+    fi
+    
+    # Анализ сетевых соединений
+    if [[ -f "$forensic_dir/ss_tunap.txt" ]]; then
+        log "INFO" "Анализ подозрительных сетевых соединений..."
+        
+        # Поиск соединений с необычными портами
+        grep -E ":4444|:1337|:6666|:31337" "$forensic_dir/ss_tunap.txt" > "$forensic_dir/suspicious_connections.txt"
+        
+        # Поиск исходящих соединений к нестандартным портам
+        grep -v -E ":80|:443|:53|:22" "$forensic_dir/ss_tunap.txt" | grep "ESTAB" >> "$forensic_dir/suspicious_connections.txt"
+        
+        # Подсчет количества подозрительных соединений
+        local suspicious_conn_count=$(wc -l < "$forensic_dir/suspicious_connections.txt")
+        log "INFO" "Найдено потенциально подозрительных соединений: $suspicious_conn_count"
+    fi
+    
+    # Анализ модифицированных системных файлов
+    if [[ -f "$forensic_dir/recently_modified_binaries.txt" ]]; then
+        log "INFO" "Анализ недавно модифицированных системных файлов..."
+        
+        # Подсчет количества недавно модифицированных системных файлов
+        local modified_count=$(wc -l < "$forensic_dir/recently_modified_binaries.txt")
+        log "INFO" "Найдено недавно модифицированных системных файлов: $modified_count"
+    fi
+    
+    # Анализ логов на признаки компрометации
+    if [[ -d "$forensic_dir/logs" ]]; then
+        log "INFO" "Анализ логов на признаки компрометации..."
+        
+        # Поиск попыток брутфорса SSH
+        grep "Failed password" "$forensic_dir/logs/secure" 2>/dev/null | sort | uniq -c | sort -nr > "$forensic_dir/ssh_bruteforce.txt" || true
+        
+        # Поиск успешных входов в систему
+        grep "Accepted password" "$forensic_dir/logs/secure" 2>/dev/null > "$forensic_dir/successful_logins.txt" || true
+        
+        # Поиск добавления пользователей
+        grep -E "useradd|adduser" "$forensic_dir/logs/secure" 2>/dev/null > "$forensic_dir/user_additions.txt" || true
+        
+        # Поиск исполнения sudo
+        grep "sudo:" "$forensic_dir/logs/secure" 2>/dev/null > "$forensic_dir/sudo_usage.txt" || true
+    fi
+    
+    log "INFO" "Анализ возможного вторжения завершен. Результаты доступны в $forensic_dir"
+    
+    return 0
+}
+EOF
+
+    # 9. Создание библиотеки anonymize.sh
+    cat > "$LIB_DIR/anonymize.sh" << 'EOF'
+#!/bin/bash
+#
+# Утилиты для анонимизации трафика
+# Часть системы защиты Fedora 41
+
+# Проверка доступности Tor
+check_tor_availability() {
+    if ! command -v tor &> /dev/null; then
+        log "WARNING" "Tor не установлен. Анонимизация не может быть включена."
+        return 1
+    fi
+    
+    # Проверка работоспособности службы Tor
+    if ! systemctl is-active tor &>/dev/null; then
+        log "WARNING" "Служба Tor не запущена. Попытка запуска..."
+        systemctl start tor
+        
+        # Проверка успешного запуска
+        if ! systemctl is-active tor &>/dev/null; then
+            log "ERROR" "Не удалось запустить службу Tor"
+            return 1
+        fi
+    fi
+    
+    log "INFO" "Tor доступен и готов к использованию"
+    return 0
+}
+
+# Настройка анонимизации через Tor
+setup_tor_anonymization() {
+    log "INFO" "Настройка анонимизации через Tor..."
+    
+    # Проверка доступности Tor
+    if ! check_tor_availability; then
+        return 1
+    fi
+    
+    # Настройка прозрачного проксирования через Tor
+    local transparent_proxy=$(jq -r '.network.tor.transparent_proxy' "$CONFIG_FILE")
+    if [[ "$transparent_proxy" == "true" ]]; then
+        log "INFO" "Настройка прозрачного проксирования через Tor..."
+        
+        # Сохранение текущих правил iptables
+        mkdir -p "${SCRIPT_DIR}/backup"
+        iptables-save > "${SCRIPT_DIR}/backup/iptables_backup_$(date +%Y%m%d_%H%M%S).rules"
+        
+        # Настройка правил для перенаправления через Tor
+        # Убедимся, что таблица nat существует
+        iptables -t nat -L > /dev/null 2>&1
+        
+        # Очистка предыдущих правил для Tor
+        iptables -t nat -F OUTPUT
+        
+        # Tor работает как прокси SOCKS5 на порту 9050 по умолчанию
+        # Исключаем трафик от самого Tor, чтобы избежать циклов
+        iptables -t nat -A OUTPUT -p tcp -m owner --uid-owner tor -j RETURN
+        
+        # Исключаем локальные адреса
+        iptables -t nat -A OUTPUT -d 127.0.0.0/8 -j RETURN
+        iptables -t nat -A OUTPUT -d 192.168.0.0/16 -j RETURN
+        iptables -t nat -A OUTPUT -d 10.0.0.0/8 -j RETURN
+        iptables -t nat -A OUTPUT -d 172.16.0.0/12 -j RETURN
+        
+        # Перенаправляем весь исходящий TCP-трафик через Tor
+        iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-ports 9040
+        iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-ports 9040
+        
+        log "INFO" "Прозрачное проксирование через Tor настроено"
+    else
+        log "INFO" "Прозрачное проксирование через Tor отключено в конфигурации"
+    fi
+    
+    return 0
+}
+
+# Настройка VPN-соединения
+setup_vpn() {
+    log "INFO" "Настройка VPN-соединения..."
+    
+    # Проверка наличия OpenVPN
+    if ! command -v openvpn &> /dev/null; then
+        log "WARNING" "OpenVPN не установлен. VPN не может быть настроен."
+        return 1
+    fi
+    
+    # Проверка наличия конфигурационного файла
+    local vpn_config="${CONFIG_DIR}/vpn.ovpn"
+    if [[ ! -f "$vpn_config" ]]; then
+        log "WARNING" "Конфигурационный файл VPN не найден: $vpn_config"
+        return 1
+    fi
+    
+    # Запуск OpenVPN
+    log "INFO" "Запуск OpenVPN..."
+    
+    # Останавливаем текущие соединения, если они есть
+    killall openvpn &>/dev/null || true
+    
+    # Запуск в фоновом режиме
+    openvpn --config "$vpn_config" --daemon
+    
+    # Проверка успешного подключения
+    sleep 5
+    if ip addr | grep -q "tun0"; then
+        log "INFO" "VPN соединение установлено"
+        
+        # Настройка маршрутизации через VPN
+        ip route add default via $(ip addr show tun0 | grep -Po 'peer \K[\d.]+') dev tun0
+        
+        return 0
+    else
+        log "ERROR" "Не удалось установить VPN соединение"
+        return 1
+    fi
+}
+
+# Отключение VPN
+disable_vpn() {
+    log "INFO" "Отключение VPN..."
+    
+    # Останавливаем OpenVPN
+    killall openvpn &>/dev/null || true
+    
+    # Проверка отключения
+    if ! ip addr | grep -q "tun0"; then
+        log "INFO" "VPN соединение отключено"
+        return 0
+    else
+        log "WARNING" "Не удалось отключить VPN"
+        return 1
+    fi
+}
+
+# Отключение анонимизации
+disable_anonymization() {
+    log "INFO" "Отключение анонимизации..."
+    
+    # Отключение прозрачного проксирования через Tor
+    log "INFO" "Отключение прозрачного проксирования через Tor..."
+    
+    # Очистка правил iptables для Tor
+    iptables -t nat -F OUTPUT
+    
+    # Восстановление маршрутизации по умолчанию
+    if ip addr | grep -q "tun0"; then
+        disable_vpn
+    fi
+    
+    log "INFO" "Анонимизация отключена"
+    return 0
+}
+
+# Функция проверки анонимности соединения
+check_anonymity() {
+    log "INFO" "Проверка анонимности соединения..."
+    
+    # Получение внешнего IP
+    local external_ip=$(curl -s https://ipinfo.io/ip)
+    
+    if [[ -z "$external_ip" ]]; then
+        log "WARNING" "Не удалось определить внешний IP-адрес"
+        return 1
+    fi
+    
+    log "INFO" "Текущий внешний IP-адрес: $external_ip"
+    
+    # Проверка утечек DNS
+    log "INFO" "Проверка утечек DNS..."
+    
+    # Делаем DNS-запрос и проверяем, откуда он исходит
+    local dns_server=$(dig +short whoami.akamai.net @ns1.dnscrypt.ca)
+    
+    if [[ -z "$dns_server" ]]; then
+        log "WARNING" "Не удалось выполнить проверку утечек DNS"
+    else
+        log "INFO" "DNS-запросы идут через: $dns_server"
+        
+        # Проверка соответствия DNS-сервера внешнему IP
+        if [[ "$dns_server" != "$external_ip" ]]; then
+            log "ALERT" "Обнаружена утечка DNS! DNS-запросы идут в обход прокси."
+        else
+            log "INFO" "Утечек DNS не обнаружено"
+        fi
+    fi
+    
+    # Проверка WebRTC утечек (для этого потребуется интеграция с браузером)
+    # Эта функциональность более сложная и требует дополнительных инструментов
+    
+    return 0
+}
+EOF
+
+    # 10. Создание systemd сервиса
+    cat > "$SYSTEMD_DIR/federation-monitor.service" << EOF
+[Unit]
+Description=Fedora 41 Security Monitoring System
+After=network.target auditd.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=$INSTALL_DIR/monitor.sh
+Restart=on-failure
+RestartSec=10
+KillMode=process
+TimeoutSec=300
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # 11. Создание скрипта для быстрого запуска
+    cat > "$INSTALL_DIR/federation" << 'EOF'
+#!/bin/bash
+#
+# Скрипт управления системой защиты Fedora 41
+
+# Глобальные переменные
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMAND=$1
+ARGS="${@:2}"
+
+# Цвета для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# Функция вывода помощи
+show_help() {
+    echo -e "${BLUE}${BOLD}Система защиты Fedora 41${RESET}"
+    echo -e "Использование: federation <команда> [опции]"
+    echo -e ""
+    echo -e "Доступные команды:"
+    echo -e "  ${GREEN}start${RESET}      - Запуск системы мониторинга"
+    echo -e "  ${RED}stop${RESET}       - Остановка системы мониторинга"
+    echo -e "  ${YELLOW}restart${RESET}    - Перезапуск системы мониторинга"
+    echo -e "  ${RED}lockdown${RESET}   - Экстренная блокировка системы"
+    echo -e "  ${GREEN}restore${RESET}    - Восстановление после блокировки"
+    echo -e "  ${CYAN}status${RESET}     - Проверка состояния системы"
+    echo -e "  ${YELLOW}check${RESET}      - Проверка безопасности системы"
+    echo -e "  ${CYAN}logs${RESET}       - Просмотр логов системы"
+    echo -e "  ${BLUE}anonymize${RESET}  - Включение режима анонимности"
+    echo -e "  ${MAGENTA}scan${RESET}       - Сканирование системы на уязвимости"
+    echo -e "  ${GREEN}update${RESET}     - Обновление системы защиты"
+    echo -e "  ${BLUE}help${RESET}       - Показать эту справку"
+    echo -e ""
+    echo -e "Примеры:"
+    echo -e "  federation start         - Запуск системы мониторинга"
+    echo -e "  federation logs          - Просмотр основных логов"
+    echo -e "  federation scan          - Запуск сканирования уязвимостей"
+}
+
+# Функция проверки прав
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}Эта команда требует прав администратора\e[0m"
+        echo -e "Используйте: ${YELLOW}sudo federation $COMMAND${RESET}"
+        exit 1
+    fi
+}
+
+# Основная функция
+main() {
+    case $COMMAND in
+        "start")
+            check_root
+            echo -e "${GREEN}Запуск системы мониторинга...${RESET}"
+            systemctl start federation-monitor.service
+            ;;
+        "stop")
+            check_root
+            echo -e "${RED}Остановка системы мониторинга...${RESET}"
+            systemctl stop federation-monitor.service
+            ;;
+        "restart")
+            check_root
+            echo -e "${YELLOW}Перезапуск системы мониторинга...${RESET}"
+            systemctl restart federation-monitor.service
+            ;;
+        "status")
+            systemctl status federation-monitor.service
+            ;;
+        "lockdown")
+            check_root
+            echo -e "${RED}${BOLD}ВНИМАНИЕ: Будет выполнена экстренная блокировка!${RESET}"
+            read -p "Вы уверены, что хотите продолжить? (y/N): " confirm
+            if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
+                "$SCRIPT_DIR/lockdown.sh"
+            else
+                echo -e "${YELLOW}Операция отменена${RESET}"
+            fi
+            ;;
+        "restore")
+            check_root
+            echo -e "${GREEN}Запуск восстановления системы...${RESET}"
+            "$SCRIPT_DIR/restore.sh"
+            ;;
+        "logs")
+            if [[ $EUID -ne 0 ]]; then
+                echo -e "${YELLOW}Для просмотра всех логов рекомендуется запуск с правами root${RESET}"
+            fi
+            
+            LOG_DIR="/var/log/federation"
+            if [[ -d "$LOG_DIR" ]]; then
+                if command -v less &> /dev/null; then
+                    less "$LOG_DIR/monitor.log"
+                else
+                    cat "$LOG_DIR/monitor.log"
+                fi
+            else
+                echo -e "${RED}Директория с логами не найдена: $LOG_DIR${RESET}"
+            fi
+            ;;
+        "anonymize")
+            check_root
+            echo -e "${BLUE}Включение режима анонимности...${RESET}"
+            # Здесь должна быть реализация включения анонимности
+            if [[ -f "$SCRIPT_DIR/lib/anonymize.sh" ]]; then
+                source "$SCRIPT_DIR/lib/anonymize.sh"
+                setup_tor_anonymization
+                echo -e "${GREEN}Режим анонимности включен${RESET}"
+            else
+                echo -e "${RED}Библиотека для анонимизации не найдена${RESET}"
+            fi
+            ;;
+        "scan")
+            check_root
+            echo -e "${MAGENTA}Запуск сканирования системы на уязвимостей...${RESET}"
+            if command -v lynis &> /dev/null; then
+                lynis audit system
+            elif command -v chkrootkit &> /dev/null; then
+                chkrootkit
+            else
+                echo -e "${RED}Инструменты сканирования не найдены. Установите lynis или chkrootkit.${RESET}"
+            fi
+            ;;
+        "update")
+            check_root
+            echo -e "${GREEN}Обновление системы защиты...${RESET}"
+            # Здесь можно реализовать обновление системы
+            echo -e "${YELLOW}Функция обновления будет доступна в следующей версии${RESET}"
+            ;;
+        "check")
+            check_root
+            echo -e "${YELLOW}Проверка безопасности системы...${RESET}"
+            # Базовая проверка безопасности
+            systemctl is-active federation-monitor.service &>/dev/null && \
+                echo -e "${GREEN}✓ Служба мониторинга активна${RESET}" || \
+                echo -e "${RED}✗ Служба мониторинга не активна${RESET}"
+            
+            systemctl is-active firewalld &>/dev/null && \
+                echo -e "${GREEN}✓ Файрвол активен${RESET}" || \
+                echo -e "${RED}✗ Файрвол не активен${RESET}"
+            
+            systemctl is-active fail2ban &>/dev/null && \
+                echo -e "${GREEN}✓ Fail2ban активен${RESET}" || \
+                echo -e "${RED}✗ Fail2ban не активен${RESET}"
+            
+            systemctl is-active auditd &>/dev/null && \
+                echo -e "${GREEN}✓ Система аудита активна${RESET}" || \
+                echo -e "${RED}✗ Система аудита не активна${RESET}"
+            
+            if command -v getenforce &> /dev/null; then
+                [[ "$(getenforce)" == "Enforcing" ]] && \
+                    echo -e "${GREEN}✓ SELinux в режиме Enforcing${RESET}" || \
+                    echo -e "${RED}✗ SELinux не в режиме Enforcing${RESET}"
+            fi
+            ;;
+        "help"|"--help"|"-h"|"")
+            show_help
+            ;;
+        *)
+            echo -e "${RED}Неизвестная команда: $COMMAND${RESET}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+main
+EOF
+
+    # Сделать скрипт управления исполняемым
+    chmod +x "$INSTALL_DIR/federation"
+    
+    # Создание symbolic link в /usr/local/bin для удобного доступа
+    ln -sf "$INSTALL_DIR/federation" /usr/local/bin/federation
+    
+    # Создание автодополнения для bash
+    cat > "$COMPLETION_DIR/federation" << 'EOF'
+#/usr/bin/env bash
+#
+# Автодополнение для скрипта federation
+
+_federation_complete() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    opts="start stop restart status lockdown restore logs anonymize scan update check help"
+    
+    if [[ ${cur} == * ]] ; then
+        COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+        return 0
+    fi
+}
+
+complete -F _federation_complete federation
+EOF
+
+    log "SUCCESS" "Файлы созданы"
+}
+
+# Функция установки прав доступа
+set_permissions() {
+    log "INFO" "Настройка прав доступа..."
+    
+    # Установка прав на директории
+    chmod 750 "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" \
+              "$LOG_DIR/forensic" "$LIB_DIR" \
+              "$BACKUP_DIR" "$RULES_DIR"
+    
+    # Установка прав на файлы
+    chmod 750 "$INSTALL_DIR/monitor.sh" "$INSTALL_DIR/lockdown.sh" "$INSTALL_DIR/restore.sh" "$INSTALL_DIR/federation"
+    chmod 640 "$CONFIG_DIR/config.json"
+    chmod 644 "$SYSTEMD_DIR/federation-monitor.service"
+    chmod 644 "$COMPLETION_DIR/federation"
+    
+    # Установка прав на библиотеки
+    chmod 640 "$LIB_DIR"/*.sh
+    
+    # Установка владельца
+    chown -R root:root "$INSTALL_DIR" "$CONFIG_DIR" 
+    chown -R root:root "$SYSTEMD_DIR/federation-monitor.service"
+    chown -R root:root "$COMPLETION_DIR/federation"
+    
+    log "SUCCESS" "Права доступа настроены"
+}
+
+# Функция регистрации и запуска systemd-сервиса
+setup_systemd() {
+    log "INFO" "Настройка systemd-сервиса..."
+    
+    # Перезагрузка конфигурации systemd
+    systemctl daemon-reload
+    
+    # Включение сервиса для автозапуска
+    systemctl enable federation-monitor.service
+    
+    log "SUCCESS" "Системная служба настроена"
+    
+    echo -e "${YELLOW}Хотите запустить мониторинг сейчас? (y/n)${RESET}"
+    read -r response
+    if [[ "$response" == "y" || "$response" == "Y" ]]; then
+        systemctl start federation-monitor.service
+        log "SUCCESS" "Мониторинг запущен"
+    else
+        log "INFO" "Для запуска мониторинга выполните: systemctl start federation-monitor.service"
+    fi
+}
+
+# Функция настройки дополнительных защитных мер
+setup_extra_security() {
+    log "INFO" "Настройка дополнительных защитных мер..."
+    
+    # Настройка файрвола
+    if systemctl is-active firewalld &>/dev/null; then
+        log "INFO" "Настройка файрвола..."
+        
+        # Установка дефолтной зоны
+        firewall-cmd --set-default-zone=drop
+        
+        # Разрешение SSH
+        firewall-cmd --permanent --zone=drop --add-service=ssh
+        
+        # Применение настроек
+        firewall-cmd --reload
+        
+        log "INFO" "Файрвол настроен"
+    elif command -v nft &> /dev/null; then
+        log "INFO" "Настройка nftables..."
+        
+        # Простая базовая конфигурация nftables
+        cat > /etc/nftables.conf << 'NFTEOF'
+#!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy drop;
+        
+        # Разрешить установленные соединения
+        ct state established,related accept
+        
+        # Разрешить loopback
+        iifname "lo" accept
+        
+        # ICMP
+        ip protocol icmp icmp type echo-request limit rate 5/second accept
+        
+        # SSH
+        tcp dport 22 ct state new limit rate 5/minute accept
+        
+        # Логирование
+        limit rate 3/minute log prefix "nftables-input-dropped: "
+    }
+    
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+    
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}
+NFTEOF
+
+        # Активация nftables
+        systemctl enable nftables
+        systemctl start nftables
+        
+        log "INFO" "nftables настроен"
+    fi
+    
+    # Настройка fail2ban
+    if systemctl is-active fail2ban &>/dev/null; then
+        log "INFO" "Настройка fail2ban..."
+        
+        # Пример конфигурации для защиты SSH
+        mkdir -p /etc/fail2ban/jail.d
+        cat > /etc/fail2ban/jail.d/ssh-more-secure.conf << 'F2BEOF'
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/secure
+maxretry = 3
+findtime = 600
+bantime = 3600
+F2BEOF
+
+        # Перезапуск fail2ban для применения настроек
+        systemctl restart fail2ban
+        
+        log "INFO" "fail2ban настроен"
+    fi
+    
+    # Настройка SELinux
+    if command -v setenforce &> /dev/null; then
+        log "INFO" "Настройка SELinux..."
+        
+        # Установка режима enforcing
+        setenforce 1
+        
+        # Установка дефолтного режима enforcing
+        if [[ -f "/etc/selinux/config" ]]; then
+            sed -i 's/^SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config
+        fi
+        
+        log "INFO" "SELinux настроен в режиме enforcing"
+    fi
+    
+    # Настройка sysctl для безопасности
+    log "INFO" "Настройка параметров ядра для безопасности..."
+    
+    cat > /etc/sysctl.d/99-security.conf << 'SYSCTLEOF'
+# Защита от IP spoofing
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Запрет IP forwarding
+net.ipv4.ip_forward = 0
+
+# Запрет принимать ICMP редиректы
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Запрет отправлять ICMP редиректы
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Логирование плохих пакетов
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# Защита от атак SYN flood
+net.ipv4.tcp_syncookies = 1
+
+# Ограничение принимаемых ICMP сообщений
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# IPv6 защита
+net.ipv6.conf.all.accept_ra = 0
+net.ipv6.conf.default.accept_ra = 0
+
+# Увеличение диапазона портов
+net.ipv4.ip_local_port_range = 1024 65535
+
+# Защита от time-wait assassination
+net.ipv4.tcp_rfc1337 = 1
+
+# Защита от kernel pointer утечек
+kernel.kptr_restrict = 2
+
+# Ограничение доступа к dmesg
+kernel.dmesg_restrict = 1
+
+# Защита от ptrace
+kernel.yama.ptrace_scope = 1
+
+# Ограничение sysrq
+kernel.sysrq = 0
+
+# Улучшение ASLR
+kernel.randomize_va_space = 2
+SYSCTLEOF
+
+    # Применение изменений sysctl
+    sysctl -p /etc/sysctl.d/99-security.conf
+    
+    log "SUCCESS" "Дополнительные защитные меры настроены"
+}
+
+# Функция настройки уведомлений
+setup_notifications() {
+    log "INFO" "Настройка системы уведомлений..."
+    
+    # Создание скрипта для отправки уведомлений
+    cat > "$INSTALL_DIR/tools/notify.sh" << 'EOF'
+#!/bin/bash
+#
+# Скрипт для отправки уведомлений о безопасности
+# Часть системы защиты Fedora 41
+
+# Определение директорий
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="/etc/federation/config.json"
+
+# Функция отправки email
+send_email() {
+    local subject="$1"
+    local message="$2"
+    
+    # Получение настроек email из config.json
+    local enabled=$(jq -r '.notifications.email.enabled' "$CONFIG_FILE")
+    
+    if [[ "$enabled" != "true" ]]; then
+        echo "Отправка email отключена в конфигурации"
+        return 1
+    fi
+    
+    local smtp_server=$(jq -r '.notifications.email.smtp_server' "$CONFIG_FILE")
+    local smtp_port=$(jq -r '.notifications.email.smtp_port' "$CONFIG_FILE")
+    local username=$(jq -r '.notifications.email.username' "$CONFIG_FILE")
+    local password=$(jq -r '.notifications.email.password' "$CONFIG_FILE")
+    local recipient=$(jq -r '.notifications.email.recipient' "$CONFIG_FILE")
+    
+    if [[ -z "$smtp_server" || -z "$recipient" ]]; then
+        echo "Не заданы необходимые параметры email"
+        return 1
+    fi
+    
+    # Отправка email с помощью mailx
+    if command -v mailx &> /dev/null; then
+        echo "$message" | mailx -s "$subject" -S smtp="$smtp_server:$smtp_port" \
+            -S smtp-auth=login -S smtp-auth-user="$username" -S smtp-auth-password="$password" \
+            -S from="$username" "$recipient"
+        return $?
+    else
+        echo "mailx не установлен. Не удалось отправить email."
+        return 1
+    fi
+}
+
+# Функция отправки Telegram уведомления
+send_telegram() {
+    local subject="$1"
+    local message="$2"
+    
+    # Получение настроек Telegram из config.json
+    local enabled=$(jq -r '.notifications.telegram.enabled' "$CONFIG_FILE")
+    
+    if [[ "$enabled" != "true" ]]; then
+        echo "Отправка Telegram отключена в конфигурации"
+        return 1
+    fi
+    
+    local bot_token=$(jq -r '.notifications.telegram.bot_token' "$CONFIG_FILE")
+    local chat_id=$(jq -r '.notifications.telegram.chat_id' "$CONFIG_FILE")
+    
+    if [[ -z "$bot_token" || -z "$chat_id" ]]; then
+        echo "Не заданы необходимые параметры для отправки Telegram"
+        return 1
+    fi
+    
+    # Форматирование сообщения
+    local formatted_message="*$subject*%0A%0A$message"
+    
+    # Отправка запроса через curl
+    if command -v curl &> /dev/null; then
+        curl -s "https://api.telegram.org/bot$bot_token/sendMessage" \
+            -d "chat_id=$chat_id" \
+            -d "text=$formatted_message" \
+            -d "parse_mode=Markdown"
+        return $?
+    else
+        echo "curl не установлен. Не удалось отправить Telegram уведомление."
+        return 1
+    fi
+}
+
+# Основная функция
+main() {
+    local subject="$1"
+    local message="$2"
+    local notify_method="${3:-all}"  # По умолчанию отправляем всеми методами
+    
+    # Добавление информации о хосте
+    local hostname=$(hostname)
+    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    message="Хост: $hostname
+Время: $timestamp
+
+$message"
+    
+    # Отправка уведомлений выбранным методом
+    case "$notify_method" in
+        "email")
+            send_email "$subject" "$message"
+            ;;
+        "telegram")
+            send_telegram "$subject" "$message"
+            ;;
+        "all")
+            send_email "$subject" "$message"
+            send_telegram "$subject" "$message"
+            ;;
+        *)
+            echo "Неизвестный метод уведомления: $notify_method"
+            return 1
+            ;;
+    esac
+}
+
+# Запуск скрипта
+if [[ "$#" -lt 2 ]]; then
+    echo "Использование: $(basename "$0") <тема> <сообщение> [метод]"
+    echo "Метод: email, telegram, all (по умолчанию)"
+    exit 1
+fi
+
+main "$1" "$2" "$3"
+EOF
+
+    # Сделать скрипт уведомлений исполняемым
+    chmod +x "$INSTALL_DIR/tools/notify.sh"
+    
+    log "SUCCESS" "Система уведомлений настроена"
+}
+
+# Функция тестирования системы
+test_installation() {
+    log "INFO" "Тестирование установленной системы..."
+    
+    # Создание временной директории для тестов
+    local test_dir=$(mktemp -d)
+    
+    # Тест 1: Проверка наличия всех основных файлов
+    log "INFO" "Тест 1: Проверка наличия основных файлов"
+    local missing_files=0
+    local required_files=(
+        "$INSTALL_DIR/monitor.sh"
+        "$INSTALL_DIR/lockdown.sh"
+        "$INSTALL_DIR/restore.sh"
+        "$CONFIG_DIR/config.json"
+        "$LIB_DIR/network_utils.sh"
+        "$LIB_DIR/system_utils.sh"
+        "$LIB_DIR/ids_utils.sh"
+        "$LIB_DIR/forensics.sh"
+        "$LIB_DIR/anonymize.sh"
+        "$SYSTEMD_DIR/federation-monitor.service"
+    )
+    
+    for file in "${required_files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            log "ERROR" "Файл не найден: $file"
+            ((missing_files++))
+        fi
+    done
+    
+    if [[ $missing_files -eq 0 ]]; then
+        log "SUCCESS" "Все основные файлы присутствуют"
+    else
+        log "ERROR" "Отсутствует $missing_files основных файлов"
+    fi
+    
+    # Тест 2: Проверка синтаксиса скриптов
+    log "INFO" "Тест 2: Проверка синтаксиса скриптов"
+    local syntax_errors=0
+    local scripts=(
+        "$INSTALL_DIR/monitor.sh"
+        "$INSTALL_DIR/lockdown.sh"
+        "$INSTALL_DIR/restore.sh"
+        "$LIB_DIR/network_utils.sh"
+        "$LIB_DIR/system_utils.sh"
+        "$LIB_DIR/ids_utils.sh"
+        "$LIB_DIR/forensics.sh"
+        "$LIB_DIR/anonymize.sh"
+    )
+    
+    for script in "${scripts[@]}"; do
+        if ! bash -n "$script"; then
+            log "ERROR" "Синтаксическая ошибка в скрипте: $script"
+            ((syntax_errors++))
+        fi
+    done
+    
+    if [[ $syntax_errors -eq 0 ]]; then
+        log "SUCCESS" "Все скрипты не содержат синтаксических ошибок"
+    else
+        log "ERROR" "Найдено $syntax_errors скриптов с синтаксическими ошибками"
+    fi
+    
+    # Тест 3: Проверка зависимостей
+    log "INFO" "Тест 3: Проверка зависимостей"
+    local missing_deps=0
+    local deps=(
+        "nft" "iptables" "suricata" "tor" "proxychains" "fail2ban" 
+        "firejail" "curl" "jq" "fzf" "tcpdump" "auditd"
+    )
+    
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" &> /dev/null; then
+            log "WARNING" "Зависимость не найдена: $dep"
+            ((missing_deps++))
+        fi
+    done
+    
+    if [[ $missing_deps -eq 0 ]]; then
+        log "SUCCESS" "Все зависимости установлены"
+    else
+        log "WARNING" "Не найдено $missing_deps зависимостей"
+    fi
+    
+    # Тест 4: Проверка systemd сервиса
+    log "INFO" "Тест 4: Проверка systemd сервиса"
+    if systemctl list-unit-files | grep -q "federation-monitor.service"; then
+        log "SUCCESS" "Systemd сервис установлен"
+    else
+        log "ERROR" "Systemd сервис не установлен"
+    fi
+    
+    # Тест 5: Проверка возможности запуска с минимальными функциями (без реального запуска)
+    log "INFO" "Тест 5: Проверка исполняемости скриптов"
+    if [[ -x "$INSTALL_DIR/monitor.sh" && -x "$INSTALL_DIR/lockdown.sh" && -x "$INSTALL_DIR/restore.sh" ]]; then
+        log "SUCCESS" "Все основные скрипты имеют разрешение на исполнение"
+    else
+        log "ERROR" "Не все основные скрипты имеют разрешение на исполнение"
+        chmod +x "$INSTALL_DIR/monitor.sh" "$INSTALL_DIR/lockdown.sh" "$INSTALL_DIR/restore.sh"
+    fi
+    
+    # Очистка временной директории
+    rm -rf "$test_dir"
+    
+    # Итоговый результат тестирования
+    if [[ $missing_files -eq 0 && $syntax_errors -eq 0 ]]; then
+        log "SUCCESS" "Система успешно установлена и прошла тестирование"
+        return 0
+    else
+        log "WARNING" "При тестировании системы обнаружены ошибки, но установка завершена"
+        return 1
+    fi
+}
+
+# Функция создания документации
+create_documentation() {
+    log "INFO" "Создание документации..."
+    
+    # Создание директории для документации
+    mkdir -p "$INSTALL_DIR/docs"
+    
+    # Создание README.md
+    cat > "$INSTALL_DIR/docs/README.md" << 'EOF'
+# Система защиты для Fedora 41
+
+## Обзор системы
+Данная система представляет собой комплексное решение для обеспечения безопасности системы Fedora 41.
+Система включает в себя модули мониторинга, предотвращения вторжений, анонимизации трафика и форензического анализа.
+
+## Компоненты системы
+
+### 1. Мониторинг системы
+- Отслеживание системных процессов и соединений
+- Анализ логов и выявление аномалий
+- Обнаружение модификаций критичных файлов
+- Мониторинг загрузки системы
+
+### 2. Сетевая защита
+- Конфигурация iptables/nftables для фильтрации трафика
+- Обнаружение сканирования портов и сетевых атак
+- Анонимизация трафика через Tor/VPN
+
+### 3. Система обнаружения вторжений (IDS)
+- Интеграция с Suricata
+- Настраиваемые правила детектирования угроз
+- Анализ сетевого трафика и выявление аномалий
+
+### 4. Экстренное реагирование
+- Быстрая изоляция системы при обнаружении APT-атак
+- Сохранение форензических данных для анализа
+- Автоматизированное восстановление системы после инцидентов
+
+## Использование системы
+
+### Основные команды
